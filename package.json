@@ -1,11 +1,16 @@
 {
   "name": "pingcode-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "PingCode MCP Server - 查询发布版本的缺陷与需求",
   "author": "ratat",
   "license": "MIT",
-  "git": {
-    "url": "https://github.com/ratatatat1/pingcode-mcp"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ratatatat1/pingcode-mcp.git"
+  },
+  "homepage": "https://github.com/ratatatat1/pingcode-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ratatatat1/pingcode-mcp/issues"
   },
   "keywords": [
     "mcp",
