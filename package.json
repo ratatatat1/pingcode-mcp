@@ -1,6 +1,6 @@
 {
   "name": "pingcode-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "PingCode MCP Server - 查询发布版本的缺陷与需求",
   "author": "ratat",
   "license": "MIT",

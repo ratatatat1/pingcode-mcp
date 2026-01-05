@@ -434,6 +434,14 @@ export async function getWorkItem(identifier: string): Promise<{
       '',
     ].join('\n') : '';
 
+    // 缺陷修复后更新字段的提示词（仅当类型为缺陷时添加）
+    const bugUpdateFieldsPrompt = isBug ? [
+      '',
+      '📝 **[修复完成后-更新字段]** 询问用户是否更新 PingCode 字段（原因分析、解决方案、解决方法），如需更新则调用 `get_bug_field_options` 获取选项，根据修复内容选择并调用 `update_bug_fields`。',
+      '📝 **[修复完成后-提交代码]** 无论是否更新字段，都要询问用户是否创建 commit。',
+      '',
+    ].join('\n') : '';
+
     // 给 AI 的提示词（文本兜底：即使客户端不读取 aiDirectives，也尽量让模型遵守）
     const aiPrompt = [
       '---',
@@ -441,6 +449,7 @@ export async function getWorkItem(identifier: string): Promise<{
       '',
       '以下规则是 pingcode-mcp 的交互协议（不是普通备注）。',
       bugAnalysisPrompt,
+      bugUpdateFieldsPrompt,
       '**单任务模式已激活，违反以下规则将导致工作流失败：**',
       '1. **STOP**：完成本工作项的代码修改后，必须立即停止所有操作',
       '2. **ASK**：停止后必须询问用户是否创建 commit（提供：使用建议 / 用户输入 / 不提交）',
@@ -452,6 +461,7 @@ export async function getWorkItem(identifier: string): Promise<{
       '**内容解析**：描述与评论冲突以评论为准；多条更新按时间倒序；图片可能包含关键信息',
       '',
       '**Commit 信息**：',
+      '- commit 要简洁，只用标题，不要 body/footer',
       `- 建议 commit：${suggestedMsg}`,
       '---',
       '',
@@ -745,6 +755,133 @@ export async function updateWorkItemState(
     return {
       success: true,
       data: `✅ 工作项 ${workItemId} 状态已更新为 "${targetState.display_name || targetState.name}"`,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * 获取缺陷字段选项（原因分析、解决方案）
+ * @param workItemId 缺陷工作项编号（用于获取字段定义）
+ */
+export async function getBugFieldOptions(
+  workItemId: string
+): Promise<{
+  success: boolean;
+  data?: string;
+  reason?: Array<{ id: string; text: string }>;
+  solution?: Array<{ id: string; text: string }>;
+  error?: string;
+}> {
+  try {
+    const options = await pingcodeClient.getBugFieldOptions(workItemId);
+
+    const lines: string[] = [
+      '# 缺陷字段选项列表',
+      '',
+      '## 原因分析选项',
+      '',
+    ];
+
+    options.reason.forEach((opt, index) => {
+      lines.push(`${index + 1}. **${opt.text}** (ID: ${opt.id})`);
+    });
+
+    lines.push('', '## 解决方案选项', '');
+
+    options.solution.forEach((opt, index) => {
+      lines.push(`${index + 1}. **${opt.text}** (ID: ${opt.id})`);
+    });
+
+    return {
+      success: true,
+      data: lines.join('\n'),
+      reason: options.reason,
+      solution: options.solution,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * 更新缺陷的原因分析、解决方案、解决方法
+ * @param workItemId 工作项编号
+ * @param reason 原因分析选项文本或 ID
+ * @param solution 解决方案选项文本或 ID
+ * @param jiejuefangfa 解决方法文本
+ */
+export async function updateBugFields(
+  workItemId: string,
+  reason?: string,
+  solution?: string,
+  jiejuefangfa?: string
+): Promise<{
+  success: boolean;
+  data?: string;
+  error?: string;
+}> {
+  try {
+    // 获取选项列表用于文本到 ID 的映射
+    const options = await pingcodeClient.getBugFieldOptions(workItemId);
+    const updates: string[] = [];
+
+    // 更新原因分析
+    if (reason) {
+      // 检查是否是选项文本，如果是则转换为 ID
+      const reasonOpt = options.reason.find(
+        (opt) => opt.text === reason || opt.id === reason
+      );
+      if (reasonOpt) {
+        await pingcodeClient.updateReason(workItemId, reasonOpt.id);
+        updates.push(`原因分析: ${reasonOpt.text}`);
+      } else {
+        return {
+          success: false,
+          error: `无效的原因分析选项: "${reason}"。可用选项: ${options.reason.map((o) => o.text).join('、')}`,
+        };
+      }
+    }
+
+    // 更新解决方案
+    if (solution) {
+      const solutionOpt = options.solution.find(
+        (opt) => opt.text === solution || opt.id === solution
+      );
+      if (solutionOpt) {
+        await pingcodeClient.updateSolution(workItemId, solutionOpt.id);
+        updates.push(`解决方案: ${solutionOpt.text}`);
+      } else {
+        return {
+          success: false,
+          error: `无效的解决方案选项: "${solution}"。可用选项: ${options.solution.map((o) => o.text).join('、')}`,
+        };
+      }
+    }
+
+    // 更新解决方法（文本字段）
+    if (jiejuefangfa) {
+      await pingcodeClient.updateJiejuefangfa(workItemId, jiejuefangfa);
+      updates.push(`解决方法: ${jiejuefangfa.substring(0, 50)}${jiejuefangfa.length > 50 ? '...' : ''}`);
+    }
+
+    if (updates.length === 0) {
+      return {
+        success: false,
+        error: '请至少提供一个要更新的字段（reason、solution 或 jiejuefangfa）',
+      };
+    }
+
+    return {
+      success: true,
+      data: `✅ 工作项 ${workItemId} 已更新：\n${updates.map((u) => `  - ${u}`).join('\n')}`,
     };
   } catch (error: any) {
     return {

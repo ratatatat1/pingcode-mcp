@@ -465,6 +465,128 @@ export class PingCodeClient {
       throw error;
     }
   }
+
+  /**
+   * 获取缺陷字段的选项列表（从工作项的 references 中提取）
+   * @param workItemId 缺陷工作项的编号
+   */
+  async getBugFieldOptions(workItemId: string): Promise<{
+    reason: Array<{ id: string; text: string }>;
+    solution: Array<{ id: string; text: string }>;
+  }> {
+    const headers = this.getAuthHeaders();
+    const cleanId = workItemId.replace(/^#/, '').trim();
+
+    try {
+      const response = await this.client.get(`/api/agile/work-items/${cleanId}`, { headers });
+      const refs = response.data?.data?.references || {};
+      const properties = refs.properties || [];
+
+      const result = {
+        reason: [] as Array<{ id: string; text: string }>,
+        solution: [] as Array<{ id: string; text: string }>,
+      };
+
+      for (const prop of properties) {
+        if (prop.key === 'reason' && prop.options) {
+          result.reason = prop.options.map((opt: any) => ({
+            id: opt._id,
+            text: opt.text,
+          }));
+        }
+        if (prop.key === 'solution' && prop.options) {
+          result.solution = prop.options.map((opt: any) => ({
+            id: opt._id,
+            text: opt.text,
+          }));
+        }
+      }
+
+      return result;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 获取"原因分析"字段的可选值列表
+   * @param workItemId 缺陷工作项的编号
+   */
+  async getReasonOptions(workItemId: string): Promise<Array<{ id: string; text: string }>> {
+    const options = await this.getBugFieldOptions(workItemId);
+    return options.reason;
+  }
+
+  /**
+   * 获取"解决方案"字段的可选值列表
+   * @param workItemId 缺陷工作项的编号
+   */
+  async getSolutionOptions(workItemId: string): Promise<Array<{ id: string; text: string }>> {
+    const options = await this.getBugFieldOptions(workItemId);
+    return options.solution;
+  }
+
+  /**
+   * 更新缺陷工作项的属性
+   * @param workItemId 工作项编号（如 LFY-2559）
+   * @param key 属性名（如 reason, solution, jiejuefangfa）
+   * @param value 属性值（枚举字段使用选项 ID，文本字段使用文本内容）
+   */
+  async updateBugProperty(workItemId: string, key: string, value: string): Promise<boolean> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      // 1. 先获取工作项以拿到内部 _id
+      const workItem = await this.getWorkItem(workItemId);
+      if (!workItem) {
+        throw new Error(`未找到工作项: ${workItemId}`);
+      }
+      const internalId = (workItem as any)._id;
+
+      // 2. 使用内部 _id 调用 /property API
+      await this.client.put(
+        `/api/agile/work-items/${internalId}/property`,
+        { key, value, is_pure_update: 0 },
+        { headers }
+      );
+      return true;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 更新"原因分析"字段
+   * @param workItemId 工作项编号
+   * @param reasonId 原因分析选项 ID（可通过 getReasonOptions 获取）
+   */
+  async updateReason(workItemId: string, reasonId: string): Promise<boolean> {
+    return this.updateBugProperty(workItemId, 'reason', reasonId);
+  }
+
+  /**
+   * 更新"解决方案"字段
+   * @param workItemId 工作项编号
+   * @param solutionId 解决方案选项 ID（可通过 getSolutionOptions 获取）
+   */
+  async updateSolution(workItemId: string, solutionId: string): Promise<boolean> {
+    return this.updateBugProperty(workItemId, 'solution', solutionId);
+  }
+
+  /**
+   * 更新"解决方法"字段（文本字段）
+   * @param workItemId 工作项编号
+   * @param text 解决方法的文本内容
+   */
+  async updateJiejuefangfa(workItemId: string, text: string): Promise<boolean> {
+    return this.updateBugProperty(workItemId, 'jiejuefangfa', text);
+  }
 }
 
 // 常用优先级映射（PingCode 默认配置）

@@ -7,7 +7,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { login, logout, checkAuth } from './tools/login.js';
-import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState } from './tools/work-items.js';
+import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields } from './tools/work-items.js';
 
 // 创建 MCP 服务器
 const server = new Server(
@@ -151,6 +151,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ['work_item_id', 'state_name'],
+        },
+      },
+      {
+        name: 'get_bug_field_options',
+        description: '获取缺陷字段的可选值列表（原因分析、解决方案）及其 ID 映射。AI 根据修复内容判断选择哪个选项。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '缺陷工作项编号',
+            },
+          },
+          required: ['work_item_id'],
+        },
+      },
+      {
+        name: 'update_bug_fields',
+        description: '更新缺陷的原因分析、解决方案、解决方法字段。支持使用选项文本或 ID。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号',
+            },
+            reason: {
+              type: 'string',
+              description: '原因分析（可选），使用 get_bug_field_options 返回的选项文本或 ID',
+            },
+            solution: {
+              type: 'string',
+              description: '解决方案（可选），使用 get_bug_field_options 返回的选项文本或 ID',
+            },
+            jiejuefangfa: {
+              type: 'string',
+              description: '解决方法（可选），描述具体的修复方法',
+            },
+          },
+          required: ['work_item_id'],
         },
       },
     ],
@@ -301,6 +341,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           state_name: string;
         };
         const result = await updateWorkItemState(work_item_id, state_name);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'get_bug_field_options': {
+        const { work_item_id } = args as { work_item_id: string };
+        const result = await getBugFieldOptions(work_item_id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'update_bug_fields': {
+        const { work_item_id, reason, solution, jiejuefangfa } = args as {
+          work_item_id: string;
+          reason?: string;
+          solution?: string;
+          jiejuefangfa?: string;
+        };
+        const result = await updateBugFields(work_item_id, reason, solution, jiejuefangfa);
         return {
           content: [
             {
