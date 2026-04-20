@@ -10,7 +10,7 @@ import {
 } from '../utils/credentials.js';
 import type { Credentials, CookieData } from '../types/pingcode.js';
 
-const PINGCODE_DOMAIN = process.env.PINGCODE_DOMAIN || 'neuralgalaxy.pingcode.com';
+const PINGCODE_DOMAIN = process.env.PINGCODE_DOMAIN || 'your-company.pingcode.com';
 const LOGIN_URL = `https://${PINGCODE_DOMAIN}/signin`;
 const SUCCESS_URL_PATTERN = /pingcode\.com\/(pjm|agile|wiki|testhub|workspace)/;
 

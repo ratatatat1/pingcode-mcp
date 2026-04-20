@@ -8,6 +8,7 @@ import {
 
 import { login, logout, checkAuth } from './tools/login.js';
 import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields } from './tools/work-items.js';
+import { listTestLibraries, listTestSuites, getTestCaseModules, listTestCases, getTestCasesByModule, getTestCase } from './tools/testhub.js';
 
 // 创建 MCP 服务器
 const server = new Server(
@@ -58,13 +59,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'get_work_item',
         description:
-          '通过 PingCode 工作项编号获取详情。支持格式：#12345、12345、LFY-123 等。',
+          '通过 PingCode 工作项编号获取详情。支持格式：#12345、12345、<project_id>-123 等。',
         inputSchema: {
           type: 'object',
           properties: {
             identifier: {
               type: 'string',
-              description: '工作项编号，如 #12345、12345 或 LFY-123',
+              description: '工作项编号，如 #12345、12345 或 <project_id>-123',
             },
           },
           required: ['identifier'],
@@ -83,7 +84,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             project_id: {
               type: 'string',
-              description: '项目标识，如 LFY',
+              description: '项目标识，如 <project_id>',
             },
             item_type: {
               type: 'string',
@@ -120,7 +121,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             project_id: {
               type: 'string',
-              description: '项目标识，如 LFY（优点云）',
+              description: '项目标识，如 <project_id>',
             },
           },
           required: ['project_id'],
@@ -136,6 +137,135 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'list_test_libraries',
+        description: '列出用户可访问的所有测试库。返回测试库标识和名称列表。',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: 'list_test_suites',
+        description: '列出测试库中的全部测试模块。返回平铺列表，支持直属模块和关联模块。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            library_id: {
+              type: 'string',
+              description: '测试库标识，如 <library_id>',
+            },
+            suite_type: {
+              type: 'string',
+              enum: ['direct', 'link'],
+              description: '模块类型：direct=直属模块，link=关联模块',
+            },
+          },
+          required: ['library_id'],
+        },
+      },
+      {
+        name: 'get_test_case_modules',
+        description: '获取测试库中的顶层用例模块列表。返回结果与 TestHub 左侧模块树第一层一致，支持直属模块和关联模块。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            library_id: {
+              type: 'string',
+              description: '测试库标识，如 <library_id>',
+            },
+            suite_type: {
+              type: 'string',
+              enum: ['direct', 'link'],
+              description: '模块类型：direct=直属模块，link=关联模块',
+            },
+          },
+          required: ['library_id'],
+        },
+      },
+      {
+        name: 'list_test_cases',
+        description: '获取测试库中的测试用例列表。可按模块、关键词和分页筛选。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            library_id: {
+              type: 'string',
+              description: '测试库标识，如 <library_id>',
+            },
+            suite_id: {
+              type: 'string',
+              description: '测试模块 ID（可选，可通过 list_test_suites 获取）',
+            },
+            keyword: {
+              type: 'string',
+              description: '标题/编号搜索关键词（可选）',
+            },
+            page_index: {
+              type: 'number',
+              description: '页码，从 0 开始（可选，默认 0）',
+            },
+            page_size: {
+              type: 'number',
+              description: '每页数量（可选，默认 50）',
+            },
+            include_sub_suite: {
+              type: 'boolean',
+              description: '是否包含子模块用例（可选，默认 true）',
+            },
+          },
+          required: ['library_id'],
+        },
+      },
+      {
+        name: 'get_test_cases_by_module',
+        description: '获取某个用例模块下的测试用例列表。支持关键词搜索和分页。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            library_id: {
+              type: 'string',
+              description: '测试库标识，如 <library_id>',
+            },
+            suite_id: {
+              type: 'string',
+              description: '测试模块 ID，可通过 get_test_case_modules 获取',
+            },
+            keyword: {
+              type: 'string',
+              description: '标题/编号搜索关键词（可选）',
+            },
+            page_index: {
+              type: 'number',
+              description: '页码，从 0 开始（可选，默认 0）',
+            },
+            page_size: {
+              type: 'number',
+              description: '每页数量（可选，默认 50）',
+            },
+            include_sub_suite: {
+              type: 'boolean',
+              description: '是否包含子模块用例（可选，默认 true）',
+            },
+          },
+          required: ['library_id', 'suite_id'],
+        },
+      },
+      {
+        name: 'get_test_case',
+        description: '获取测试用例详情。test_case_id 支持详情页 URL 中的短 ID（如 <short_id>）和展示编号（如 <project_id>-123）。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            test_case_id: {
+              type: 'string',
+              description: '测试用例短 ID（如 <short_id>）或展示编号（如 <project_id>-123）',
+            },
+          },
+          required: ['test_case_id'],
+        },
+      },
+      {
         name: 'update_work_item_state',
         description: '更新工作项（缺陷/需求/任务）的状态。通过状态名称指定目标状态。',
         inputSchema: {
@@ -143,7 +273,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             work_item_id: {
               type: 'string',
-              description: '工作项编号，如 LFY-2527',
+              description: '工作项编号，如 <project_id>-123',
             },
             state_name: {
               type: 'string',
@@ -324,6 +454,137 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'list_projects': {
         const result = await listProjects();
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'list_test_libraries': {
+        const result = await listTestLibraries();
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'list_test_suites': {
+        const { library_id, suite_type } = args as {
+          library_id: string;
+          suite_type?: 'direct' | 'link';
+        };
+        const result = await listTestSuites(library_id, suite_type);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'get_test_case_modules': {
+        const { library_id, suite_type } = args as {
+          library_id: string;
+          suite_type?: 'direct' | 'link';
+        };
+        const result = await getTestCaseModules(library_id, suite_type);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'list_test_cases': {
+        const {
+          library_id,
+          suite_id,
+          keyword,
+          page_index,
+          page_size,
+          include_sub_suite,
+        } = args as {
+          library_id: string;
+          suite_id?: string;
+          keyword?: string;
+          page_index?: number;
+          page_size?: number;
+          include_sub_suite?: boolean;
+        };
+        const result = await listTestCases(
+          library_id,
+          suite_id,
+          keyword,
+          page_index,
+          page_size,
+          include_sub_suite
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'get_test_cases_by_module': {
+        const {
+          library_id,
+          suite_id,
+          keyword,
+          page_index,
+          page_size,
+          include_sub_suite,
+        } = args as {
+          library_id: string;
+          suite_id: string;
+          keyword?: string;
+          page_index?: number;
+          page_size?: number;
+          include_sub_suite?: boolean;
+        };
+        const result = await getTestCasesByModule(
+          library_id,
+          suite_id,
+          keyword,
+          page_index,
+          page_size,
+          include_sub_suite
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'get_test_case': {
+        const { test_case_id } = args as { test_case_id: string };
+        const result = await getTestCase(test_case_id);
         return {
           content: [
             {
