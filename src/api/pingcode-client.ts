@@ -17,6 +17,17 @@ import type {
 
 const DEFAULT_DOMAIN = process.env.PINGCODE_DOMAIN || 'your-company.pingcode.com';
 
+/**
+ * 测试用例展示编号无法解析为短 ID 时抛出
+ * 用于上层区分"格式/权限/不存在"与"详情接口 404"
+ */
+export class TestCaseIdentifierError extends Error {
+  constructor(public readonly identifier: string) {
+    super(`无法将展示编号 "${identifier}" 解析为测试用例短 ID（可能编号不存在、无访问权限或不属于当前测试库）`);
+    this.name = 'TestCaseIdentifierError';
+  }
+}
+
 export class PingCodeClient {
   private client: AxiosInstance;
   private baseUrl: string;
@@ -573,19 +584,36 @@ export class PingCodeClient {
       return null;
     }
 
-    const result = await this.listTestCases(libraryIdentifier, {
-      keyword: identifier,
-      page_index: 0,
-      page_size: 20,
-    });
+    // 关键词命中可能有大量同前缀结果，需要分页扫描直到找到精确匹配或扫完
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 50; // 上限保护：最多扫 5000 条
+    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
+      const result = await this.listTestCases(libraryIdentifier, {
+        keyword: identifier,
+        page_index: pageIndex,
+        page_size: PAGE_SIZE,
+      });
 
-    const matched = result.items.find((item) => item.whole_identifier === identifier);
-    return matched?.short_id || null;
+      const matched = result.items.find((item) => item.whole_identifier === identifier);
+      if (matched) {
+        return matched.short_id;
+      }
+
+      const reachedEnd =
+        result.items.length === 0 ||
+        pageIndex + 1 >= (result.page_count || 0);
+      if (reachedEnd) {
+        return null;
+      }
+    }
+
+    return null;
   }
 
   /**
    * 获取测试用例详情
    * @param testCaseId 测试用例短 ID，如 <short_id>；也支持展示编号，如 <project_id>-123
+   * @throws TestCaseIdentifierError 当展示编号无法解析为短 ID 时（用于和"详情 404"区分）
    */
   async getTestCase(testCaseId: string): Promise<TestCase | null> {
     const headers = this.getAuthHeaders();
@@ -595,7 +623,7 @@ export class PingCodeClient {
     if (/^[A-Za-z]+-\d+$/.test(cleanId)) {
       const shortId = await this.resolveTestCaseShortId(cleanId);
       if (!shortId) {
-        return null;
+        throw new TestCaseIdentifierError(cleanId);
       }
       resolvedId = shortId;
     }

@@ -181,15 +181,11 @@ codex mcp list
 ```
 
 ```
-列出 <library_id> 测试库里的测试用例
+列出所有测试库
 ```
 
 ```
-获取 <library_id> 测试库的用例模块
-```
-
-```
-获取 <library_id> 测试库中 <suite_id> 模块下的用例
+打开 <library_id> 测试库逐层浏览模块和用例
 ```
 
 ```
@@ -208,15 +204,36 @@ codex mcp list
 | `list_releases`          | 列出项目的发布版本         | `project_id`: 项目标识（如 `<project_id>`）                                  |
 | `get_release_items`      | 获取版本关联的工作项       | `release_id`: 版本ID<br>`project_id`: 项目标识<br>`item_type`: bug/story/all |
 | `search_work_items`      | 搜索工作项                 | `query`: 搜索关键词<br>`project_id`: 项目标识（可选）                        |
-| `list_test_libraries`    | 列出所有可访问测试库       | 无                                                                           |
-| `list_test_suites`       | 列出测试库中的全部测试模块（平铺） | `library_id`: 测试库标识（如 `<library_id>`）<br>`suite_type`: direct/link（可选） |
-| `get_test_case_modules`  | 获取测试库中的顶层用例模块 | `library_id`: 测试库标识（如 `<library_id>`）<br>`suite_type`: direct/link（可选） |
-| `list_test_cases`        | 获取测试用例列表           | `library_id`: 测试库标识<br>`suite_id`: 模块 ID（可选）<br>`keyword`: 搜索关键词（可选）<br>`page_index`: 页码（可选）<br>`page_size`: 每页数量（可选）<br>`include_sub_suite`: 是否包含子模块（可选） |
-| `get_test_cases_by_module` | 获取某个用例模块下的测试用例 | `library_id`: 测试库标识<br>`suite_id`: 模块 ID<br>`keyword`: 搜索关键词（可选）<br>`page_index`: 页码（可选）<br>`page_size`: 每页数量（可选）<br>`include_sub_suite`: 是否包含子模块（可选） |
+| `list_test_libraries`    | 列出所有可访问测试库（钻取入口） | 无                                                                           |
+| `browse_test_module`     | 逐层浏览测试模块树：一次返回当前位置的【子模块 + 直属用例 + 面包屑 + 下一步建议】。模块行展示"用例数"（直属与子树合计相等时显示一个数，否则显示 `直属 X / 子树合计 Y`），根层额外给出"测试库累计用例数" | `library_id`: 测试库标识<br>`suite_id`: 模块 ID（可选，不传 = 进入根；传 = 进入该模块）<br>`page_index`: 直属用例页码（可选，默认 0）<br>`page_size`: 直属用例每页数量（可选，默认 20） |
+| `search_test_cases`      | 在指定测试库内全库关键词搜索测试用例（跳跃式补充） | `library_id`: 测试库标识<br>`keyword`: 搜索关键词（必填）<br>`page_index`: 页码（可选，默认 0）<br>`page_size`: 每页数量（可选，默认 20） |
 | `get_test_case`          | 获取测试用例详情           | `test_case_id`: 测试用例短 ID（如 `<short_id>`）或展示编号（如 `<project_id>-123`） |
 | `update_work_item_state` | 更新工作项状态             | `work_item_id`: 工作项编号<br>`state_name`: 目标状态                         |
 | `get_bug_field_options`  | 获取缺陷字段可选值         | `work_item_id`: 缺陷工作项编号                                               |
 | `update_bug_fields`      | 更新缺陷的分析和解决方案   | `work_item_id`: 工作项编号<br>`reason`: 原因分析（可选）<br>`solution`: 解决方案（可选）<br>`jiejuefangfa`: 解决方法（可选） |
+
+### 🧪 TestHub 钻取式工作流
+
+测试用例的定位采用"逐层钻取"模式，AI 会按下面的循环走，直到找到目标用例：
+
+```
+list_test_libraries          # 1. 选库
+        ↓
+browse_test_module(library)  # 2. 进入根，看顶层模块
+        ↓
+browse_test_module(library, suite_id)   # 3. 进入某个模块
+        ↓                               #    - 有子模块就继续 browse 钻入
+        ↓                               #    - 看到目标用例就跳到下一步
+get_test_case(test_case_id)  # 4. 看用例详情（步骤、前置条件、版本等）
+```
+
+每一步返回的模块行都带"用例数"：
+- 数字单显示 → 直属和子树合计相等（典型叶子模块）
+- `直属 X / 子树合计 Y` → 该模块自身挂了 X 条，整棵子树共 Y 条（X==0 表示纯目录壳子）
+
+可以据此判断是否值得钻入；根层会先告诉你"测试库累计用例数"，方便横向比对。
+
+如果已经知道关键词、不想逐层走，可以用 `search_test_cases(library_id, keyword)` 直接跳到结果列表。
 
 ## 💡 使用示例
 
@@ -254,28 +271,26 @@ https://yourcompany.pingcode.com/pjm/projects/<project_id>/releases/<release_id>
 列出所有测试库
 ```
 
-### 列出测试模块
+### 浏览测试模块（钻取式）
+
+进入测试库根，看顶层模块：
 
 ```
-列出 <library_id> 测试库的直属测试模块
+打开 <library_id> 测试库（不传 suite_id，进入根目录看顶层模块）
 ```
 
-```
-获取 <library_id> 测试库的用例模块
-```
-
-### 查询测试用例列表
+进入某个模块，看子模块和该模块下的直属用例：
 
 ```
-列出 <library_id> 测试库中的测试用例
+进入 <library_id> 测试库的 <suite_id> 模块（钻入下一层）
 ```
 
-```
-搜索 <library_id> 测试库中包含“登录”的测试用例
-```
+> AI 会基于返回的"下一步"提示循环调用 `browse_test_module`，直到找到目标用例编号。
+
+### 关键词搜索测试用例（跳跃式）
 
 ```
-获取 <library_id> 测试库中 <suite_id> 模块下的用例
+在 <library_id> 测试库里搜包含"登录"的测试用例
 ```
 
 ### 查看测试用例详情

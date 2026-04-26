@@ -8,7 +8,7 @@ import {
 
 import { login, logout, checkAuth } from './tools/login.js';
 import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields } from './tools/work-items.js';
-import { listTestLibraries, listTestSuites, getTestCaseModules, listTestCases, getTestCasesByModule, getTestCase } from './tools/testhub.js';
+import { listTestLibraries, browseTestModule, searchTestCases, getTestCase } from './tools/testhub.js';
 
 // 创建 MCP 服务器
 const server = new Server(
@@ -138,7 +138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'list_test_libraries',
-        description: '列出用户可访问的所有测试库。返回测试库标识和名称列表。',
+        description: '列出用户可访问的所有测试库。这是定位测试用例的第一步：先选库 → browse_test_module 逐层钻取 → get_test_case 看详情。',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -146,80 +146,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: 'list_test_suites',
-        description: '列出测试库中的全部测试模块。返回平铺列表，支持直属模块和关联模块。',
+        name: 'browse_test_module',
+        description:
+          '浏览测试库的模块树，一次返回当前位置的【子模块 + 当前模块直属用例 + 面包屑 + 下一步建议】。' +
+          '不传 suite_id 进入测试库根（列顶层模块）；传 suite_id 进入该模块。' +
+          '模块行的"用例数"展示直属或"直属/子树合计"两种形式；根层会额外给出测试库累计用例数。' +
+          '使用方式：循环调用钻取，直到找到目标用例编号后用 get_test_case 看详情。',
         inputSchema: {
           type: 'object',
           properties: {
             library_id: {
               type: 'string',
-              description: '测试库标识，如 <library_id>',
-            },
-            suite_type: {
-              type: 'string',
-              enum: ['direct', 'link'],
-              description: '模块类型：direct=直属模块，link=关联模块',
-            },
-          },
-          required: ['library_id'],
-        },
-      },
-      {
-        name: 'get_test_case_modules',
-        description: '获取测试库中的顶层用例模块列表。返回结果与 TestHub 左侧模块树第一层一致，支持直属模块和关联模块。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            library_id: {
-              type: 'string',
-              description: '测试库标识，如 <library_id>',
-            },
-            suite_type: {
-              type: 'string',
-              enum: ['direct', 'link'],
-              description: '模块类型：direct=直属模块，link=关联模块',
-            },
-          },
-          required: ['library_id'],
-        },
-      },
-      {
-        name: 'list_test_cases',
-        description: '获取测试库中的测试用例列表。可按模块、关键词和分页筛选。',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            library_id: {
-              type: 'string',
-              description: '测试库标识，如 <library_id>',
+              description: '测试库标识（来自 list_test_libraries），如 <library_id>',
             },
             suite_id: {
               type: 'string',
-              description: '测试模块 ID（可选，可通过 list_test_suites 获取）',
-            },
-            keyword: {
-              type: 'string',
-              description: '标题/编号搜索关键词（可选）',
+              description: '模块 ID（可选）。不传 = 进入根；传 = 进入该模块。模块 ID 从上一次 browse_test_module 的输出里拿',
             },
             page_index: {
               type: 'number',
-              description: '页码，从 0 开始（可选，默认 0）',
+              description: '当前模块直属用例的页码，从 0 开始（默认 0）',
             },
             page_size: {
               type: 'number',
-              description: '每页数量（可选，默认 50）',
-            },
-            include_sub_suite: {
-              type: 'boolean',
-              description: '是否包含子模块用例（可选，默认 true）',
+              description: '当前模块直属用例的每页数量（默认 20）',
             },
           },
           required: ['library_id'],
         },
       },
       {
-        name: 'get_test_cases_by_module',
-        description: '获取某个用例模块下的测试用例列表。支持关键词搜索和分页。',
+        name: 'search_test_cases',
+        description:
+          '在指定测试库内全库关键词搜索测试用例（标题/编号匹配）。当不知道用例在哪个模块时使用，作为 browse_test_module 的"跳跃"补充。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -227,28 +186,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: '测试库标识，如 <library_id>',
             },
-            suite_id: {
-              type: 'string',
-              description: '测试模块 ID，可通过 get_test_case_modules 获取',
-            },
             keyword: {
               type: 'string',
-              description: '标题/编号搜索关键词（可选）',
+              description: '搜索关键词（必填，命中标题或编号）',
             },
             page_index: {
               type: 'number',
-              description: '页码，从 0 开始（可选，默认 0）',
+              description: '页码，从 0 开始（默认 0）',
             },
             page_size: {
               type: 'number',
-              description: '每页数量（可选，默认 50）',
-            },
-            include_sub_suite: {
-              type: 'boolean',
-              description: '是否包含子模块用例（可选，默认 true）',
+              description: '每页数量（默认 20）',
             },
           },
-          required: ['library_id', 'suite_id'],
+          required: ['library_id', 'keyword'],
         },
       },
       {
@@ -478,64 +429,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'list_test_suites': {
-        const { library_id, suite_type } = args as {
-          library_id: string;
-          suite_type?: 'direct' | 'link';
-        };
-        const result = await listTestSuites(library_id, suite_type);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result.success ? result.data! : `错误: ${result.error}`,
-            },
-          ],
-          isError: !result.success,
-        };
-      }
-
-      case 'get_test_case_modules': {
-        const { library_id, suite_type } = args as {
-          library_id: string;
-          suite_type?: 'direct' | 'link';
-        };
-        const result = await getTestCaseModules(library_id, suite_type);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result.success ? result.data! : `错误: ${result.error}`,
-            },
-          ],
-          isError: !result.success,
-        };
-      }
-
-      case 'list_test_cases': {
-        const {
-          library_id,
-          suite_id,
-          keyword,
-          page_index,
-          page_size,
-          include_sub_suite,
-        } = args as {
+      case 'browse_test_module': {
+        const { library_id, suite_id, page_index, page_size } = args as {
           library_id: string;
           suite_id?: string;
-          keyword?: string;
           page_index?: number;
           page_size?: number;
-          include_sub_suite?: boolean;
         };
-        const result = await listTestCases(
-          library_id,
-          suite_id,
-          keyword,
-          page_index,
-          page_size,
-          include_sub_suite
-        );
+        const result = await browseTestModule(library_id, suite_id, page_index, page_size);
         return {
           content: [
             {
@@ -547,30 +448,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'get_test_cases_by_module': {
-        const {
-          library_id,
-          suite_id,
-          keyword,
-          page_index,
-          page_size,
-          include_sub_suite,
-        } = args as {
+      case 'search_test_cases': {
+        const { library_id, keyword, page_index, page_size } = args as {
           library_id: string;
-          suite_id: string;
-          keyword?: string;
+          keyword: string;
           page_index?: number;
           page_size?: number;
-          include_sub_suite?: boolean;
         };
-        const result = await getTestCasesByModule(
-          library_id,
-          suite_id,
-          keyword,
-          page_index,
-          page_size,
-          include_sub_suite
-        );
+        const result = await searchTestCases(library_id, keyword, page_index, page_size);
         return {
           content: [
             {
