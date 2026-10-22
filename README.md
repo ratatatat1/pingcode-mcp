@@ -211,6 +211,7 @@ codex mcp list
 | `update_work_item_state` | 更新工作项状态             | `work_item_id`: 工作项编号<br>`state_name`: 目标状态                         |
 | `get_bug_field_options`  | 获取缺陷字段可选值         | `work_item_id`: 缺陷工作项编号                                               |
 | `update_bug_fields`      | 更新缺陷的分析和解决方案   | `work_item_id`: 工作项编号<br>`reason`: 原因分析（可选）<br>`solution`: 解决方案（可选）<br>`jiejuefangfa`: 解决方法（可选） |
+| `add_work_item_comment`  | 给工作项添加评论，`@姓名` 会转成提及 | `work_item_id`: 工作项编号<br>`content`: 评论正文，可写 `@姓名`<br>`reply_comment_id`: 被回复评论的 `_id`（可选） |
 
 ### 🧪 TestHub 钻取式工作流
 

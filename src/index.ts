@@ -7,7 +7,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { login, logout, checkAuth } from './tools/login.js';
-import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields } from './tools/work-items.js';
+import { getWorkItem, getReleaseItems, searchWorkItems, listReleases, listProjects, updateWorkItemState, getBugFieldOptions, updateBugFields, addWorkItemComment } from './tools/work-items.js';
 import { listTestLibraries, browseTestModule, searchTestCases, getTestCase } from './tools/testhub.js';
 
 // 创建 MCP 服务器
@@ -274,6 +274,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['work_item_id'],
         },
       },
+      {
+        name: 'add_work_item_comment',
+        description:
+          '给工作项添加评论。content 中的 @姓名 会转成真正的提及，不是普通文本。回复某条评论时传 reply_comment_id。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            work_item_id: {
+              type: 'string',
+              description: '工作项编号，如 M100-195',
+            },
+            content: {
+              type: 'string',
+              description: '评论正文。要提及时直接写 @姓名，例如 @郑则栋',
+            },
+            reply_comment_id: {
+              type: 'string',
+              description: '可选。被回复评论的 _id，不是列表序号',
+            },
+          },
+          required: ['work_item_id', 'content'],
+        },
+      },
     ],
   };
 });
@@ -520,6 +543,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           jiejuefangfa?: string;
         };
         const result = await updateBugFields(work_item_id, reason, solution, jiejuefangfa);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: result.success ? result.data! : `错误: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+
+      case 'add_work_item_comment': {
+        const { work_item_id, content, reply_comment_id } = args as {
+          work_item_id: string;
+          content: string;
+          reply_comment_id?: string;
+        };
+        const result = await addWorkItemComment(work_item_id, content, reply_comment_id);
         return {
           content: [
             {
