@@ -4,9 +4,29 @@ import {
   isCredentialsValid,
   cookiesToHeader,
 } from '../utils/credentials.js';
-import type { WorkItem, Release, ApiResponse } from '../types/pingcode.js';
+import type {
+  WorkItem,
+  Release,
+  ApiResponse,
+  TestLibrary,
+  TestSuite,
+  TestCase,
+  TestCaseQueryOptions,
+  PaginatedTestCases,
+} from '../types/pingcode.js';
 
-const DEFAULT_DOMAIN = process.env.PINGCODE_DOMAIN || 'neuralgalaxy.pingcode.com';
+const DEFAULT_DOMAIN = process.env.PINGCODE_DOMAIN || 'your-company.pingcode.com';
+
+/**
+ * 测试用例展示编号无法解析为短 ID 时抛出
+ * 用于上层区分"格式/权限/不存在"与"详情接口 404"
+ */
+export class TestCaseIdentifierError extends Error {
+  constructor(public readonly identifier: string) {
+    super(`无法将展示编号 "${identifier}" 解析为测试用例短 ID（可能编号不存在、无访问权限或不属于当前测试库）`);
+    this.name = 'TestCaseIdentifierError';
+  }
+}
 
 export class PingCodeClient {
   private client: AxiosInstance;
@@ -47,12 +67,12 @@ export class PingCodeClient {
 
   /**
    * 通过编号获取工作项详情
-   * @param identifier 工作项编号，如 "12345" 或 "#12345" 或 "LFY-123"
+   * @param identifier 工作项编号，如 "12345" 或 "#12345" 或 "<project_id>-123"
    */
   async getWorkItem(identifier: string): Promise<WorkItem | null> {
     const headers = this.getAuthHeaders();
     
-    // 清理编号格式，支持 #LFY-2513、LFY-2513、2513 等格式
+    // 清理编号格式，支持 #<project_id>-123、<project_id>-123、123 等格式
     let cleanId = identifier.replace(/^#/, '').trim();
     
     try {
@@ -99,7 +119,7 @@ export class PingCodeClient {
   /**
    * 获取发布版本关联的工作项
    * @param releaseId 发布版本 ID
-   * @param projectIdentifier 项目标识，如 LFY
+   * @param projectIdentifier 项目标识，如 <project_id>
    * @param itemType 工作项类型筛选
    */
   async getReleaseWorkItems(
@@ -154,7 +174,7 @@ export class PingCodeClient {
 
   /**
    * 获取项目的发布版本列表
-   * @param projectIdentifier 项目标识，如 LFY
+   * @param projectIdentifier 项目标识，如 <project_id>
    */
   async getProjectReleases(projectIdentifier: string): Promise<any[]> {
     const headers = this.getAuthHeaders();
@@ -334,13 +354,15 @@ export class PingCodeClient {
     // 转为 any 以便添加额外字段
     const item: any = workItem;
 
-    // 从标识符中提取项目标识
-    const projectIdentifier = identifier.includes('-') 
-      ? identifier.split('-')[0] 
-      : 'LFY'; // 默认项目
+    // 优先从输入编号提取项目标识，提取不到时尝试读取工作项自身的项目字段
+    const projectIdentifier = identifier.includes('-')
+      ? identifier.split('-')[0]
+      : item.project?.identifier || item.project_identifier || '';
 
     // 获取成员列表
-    const members = await this.getProjectMembers(projectIdentifier);
+    const members = projectIdentifier
+      ? await this.getProjectMembers(projectIdentifier)
+      : new Map<string, string>();
 
     // 填充负责人名称
     if (item.assignee && typeof item.assignee === 'string') {
@@ -416,8 +438,244 @@ export class PingCodeClient {
   }
 
   /**
+   * 获取用户可访问的测试库列表
+   */
+  async getTestLibraries(): Promise<TestLibrary[]> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      const response = await this.client.get(
+        '/api/testhub/pilot/entries',
+        { headers, params: { sort_direction: 'asc', ps: 100 } }
+      );
+      return response.data?.data?.value || response.data?.value || [];
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 通过测试库标识获取测试库详情
+   * @param identifier 测试库标识，如 <library_id>
+   */
+  async getTestLibrary(identifier: string): Promise<TestLibrary | null> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      const response = await this.client.get(
+        `/api/testhub/test-libraries/${identifier}`,
+        { headers, params: { addons: true, members: true } }
+      );
+      return response.data?.data?.value || response.data?.value || null;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      if (error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 通过测试库标识获取测试库内部 ID
+   */
+  async getTestLibraryId(identifier: string): Promise<string | null> {
+    const library = await this.getTestLibrary(identifier);
+    return library?._id || null;
+  }
+
+  /**
+   * 获取测试模块列表
+   * @param libraryIdentifier 测试库标识，如 <library_id>
+   * @param suiteType 模块类型：direct=直属模块，link=关联模块
+   */
+  async getTestSuites(
+    libraryIdentifier: string,
+    suiteType: 'direct' | 'link' = 'direct'
+  ): Promise<TestSuite[]> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      const libraryId = await this.getTestLibraryId(libraryIdentifier);
+      if (!libraryId) {
+        throw new Error(`未找到测试库: ${libraryIdentifier}`);
+      }
+
+      const response = await this.client.get(
+        `/api/testhub/test-libraries/${libraryId}/${suiteType}/suites`,
+        { headers }
+      );
+      return response.data?.data?.value || response.data?.value || [];
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 获取测试用例列表
+   * @param libraryIdentifier 测试库标识，如 <library_id>
+   */
+  async listTestCases(
+    libraryIdentifier: string,
+    options: TestCaseQueryOptions = {}
+  ): Promise<PaginatedTestCases> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      const libraryId = await this.getTestLibraryId(libraryIdentifier);
+      if (!libraryId) {
+        throw new Error(`未找到测试库: ${libraryIdentifier}`);
+      }
+
+      const keyword = options.keyword?.trim();
+      const response = await this.client.post(
+        `/api/testhub/test-libraries/${libraryId}/test-cases`,
+        {
+          pi: options.page_index ?? 0,
+          criteria: {
+            search: {
+              scopes: ['identifier', 'title'],
+              ...(keyword ? { keywords: keyword } : {}),
+            },
+            mode: 1,
+            conditions: [],
+          },
+          scope: {
+            include_sub_suite: options.include_sub_suite === false ? 0 : 1,
+            suite_id: options.suite_id || '',
+            link_library_id: options.link_library_id || '',
+          },
+          ps: options.page_size ?? 50,
+        },
+        { headers }
+      );
+
+      const data = response.data?.data || {};
+      return {
+        items: data.value || [],
+        total: data.count || 0,
+        page_index: data.page_index ?? options.page_index ?? 0,
+        page_size: data.page_size ?? options.page_size ?? 50,
+        page_count: data.page_count || 0,
+      };
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 通过展示编号解析测试用例短 ID
+   * @param identifier 测试用例展示编号，如 <project_id>-123
+   */
+  async resolveTestCaseShortId(identifier: string): Promise<string | null> {
+    const [libraryIdentifier] = identifier.split('-');
+    if (!libraryIdentifier || !identifier.includes('-')) {
+      return null;
+    }
+
+    // 关键词命中可能有大量同前缀结果，需要分页扫描直到找到精确匹配或扫完
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 50; // 上限保护：最多扫 5000 条
+    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex++) {
+      const result = await this.listTestCases(libraryIdentifier, {
+        keyword: identifier,
+        page_index: pageIndex,
+        page_size: PAGE_SIZE,
+      });
+
+      const matched = result.items.find((item) => item.whole_identifier === identifier);
+      if (matched) {
+        return matched.short_id;
+      }
+
+      const reachedEnd =
+        result.items.length === 0 ||
+        pageIndex + 1 >= (result.page_count || 0);
+      if (reachedEnd) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 获取测试用例详情
+   * @param testCaseId 测试用例短 ID，如 <short_id>；也支持展示编号，如 <project_id>-123
+   * @throws TestCaseIdentifierError 当展示编号无法解析为短 ID 时（用于和"详情 404"区分）
+   */
+  async getTestCase(testCaseId: string): Promise<TestCase | null> {
+    const headers = this.getAuthHeaders();
+    const cleanId = testCaseId.replace(/^#/, '').trim();
+    let resolvedId = cleanId;
+
+    if (/^[A-Za-z]+-\d+$/.test(cleanId)) {
+      const shortId = await this.resolveTestCaseShortId(cleanId);
+      if (!shortId) {
+        throw new TestCaseIdentifierError(cleanId);
+      }
+      resolvedId = shortId;
+    }
+
+    try {
+      const response = await this.client.get(
+        `/api/testhub/test-cases/${resolvedId}`,
+        { headers }
+      );
+      const item = response.data?.data?.value || response.data?.value || response.data;
+      if (item && item._id) {
+        return item;
+      }
+      return null;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      if (error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 获取测试用例类型选项
+   */
+  async getTestCaseTypeOptions(): Promise<Array<{ id: string; text: string }>> {
+    const headers = this.getAuthHeaders();
+
+    try {
+      const response = await this.client.get(
+        '/api/testhub/test-case/admin/properties/type',
+        { headers }
+      );
+      const options = response.data?.data?.value?.options || response.data?.value?.options || [];
+      return options.map((option: any) => ({
+        id: option._id,
+        text: option.text,
+      }));
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 获取工作项可选的状态列表
-   * @param workItemId 工作项 ID（如 LFY-2527）
+   * @param workItemId 工作项 ID（如 <project_id>-123）
    */
   async getSelectableStates(workItemId: string): Promise<any[]> {
     const headers = this.getAuthHeaders();
@@ -442,7 +700,7 @@ export class PingCodeClient {
 
   /**
    * 更新工作项状态
-   * @param workItemId 工作项 ID（如 LFY-2527）
+   * @param workItemId 工作项 ID（如 <project_id>-123）
    * @param stateId 目标状态 ID
    */
   async updateWorkItemState(workItemId: string, stateId: string): Promise<any> {
@@ -531,7 +789,7 @@ export class PingCodeClient {
 
   /**
    * 更新缺陷工作项的属性
-   * @param workItemId 工作项编号（如 LFY-2559）
+   * @param workItemId 工作项编号（如 <project_id>-123）
    * @param key 属性名（如 reason, solution, jiejuefangfa）
    * @param value 属性值（枚举字段使用选项 ID，文本字段使用文本内容）
    */

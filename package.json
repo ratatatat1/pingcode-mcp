@@ -1,7 +1,7 @@
 {
   "name": "pingcode-mcp",
-  "version": "1.1.1",
-  "description": "PingCode MCP Server - 与 PingCode 项目管理系统交互，支持查询、搜索和更新工作项",
+  "version": "1.1.2",
+  "description": "PingCode MCP Server - 与 PingCode 项目管理系统交互，支持工作项、发布版本和 TestHub 测试管理能力",
   "author": "ratat",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,9 @@
     "ai",
     "release",
     "bug-tracking",
-    "project-management"
+    "project-management",
+    "testhub",
+    "test-management"
   ],
   "type": "module",
   "main": "dist/index.js",

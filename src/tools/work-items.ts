@@ -726,7 +726,7 @@ export async function listProjects(): Promise<{
 
 /**
  * 更新工作项状态
- * @param workItemId 工作项编号（如 LFY-2527）
+ * @param workItemId 工作项编号（如 <project_id>-123）
  * @param stateName 目标状态名称（如 "已完成"、"进行中"）
  */
 export async function updateWorkItemState(
