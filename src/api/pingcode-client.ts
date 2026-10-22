@@ -845,6 +845,51 @@ export class PingCodeClient {
   async updateJiejuefangfa(workItemId: string, text: string): Promise<boolean> {
     return this.updateBugProperty(workItemId, 'jiejuefangfa', text);
   }
+
+  /**
+   * 给工作项添加评论。
+   * content 是富文本数组，不是普通字符串。@ 要放在 content 的 mention 节点里。
+   * 回复时传 replyCommentId，对应接口字段 reply_comment。
+   */
+  async addWorkItemComment(
+    workItemId: string,
+    content: unknown,
+    options?: {
+      attachments?: string[];
+      pages?: string[];
+      replyCommentId?: string;
+    }
+  ): Promise<any> {
+    const headers = this.getAuthHeaders();
+    const workItem = await this.getWorkItem(workItemId);
+    if (!workItem) {
+      throw new Error(`未找到工作项: ${workItemId}`);
+    }
+    const internalId = (workItem as any)._id;
+    const body: Record<string, unknown> = {
+      content,
+      attachments: options?.attachments ?? [],
+      pages: options?.pages ?? [],
+    };
+    if (options?.replyCommentId) {
+      body.reply_comment = options.replyCommentId;
+    }
+
+    try {
+      const response = await this.client.post(
+        `/api/agile/work-items/${internalId}/comment`,
+        body,
+        { headers }
+      );
+      return response.data?.data?.value || response.data?.value || response.data;
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        throw new Error('登录已过期，请重新调用 login 工具登录');
+      }
+      const message = error.response?.data?.message || error.message;
+      throw new Error(`添加评论失败: ${message}`);
+    }
+  }
 }
 
 // 常用优先级映射（PingCode 默认配置）

@@ -83,7 +83,7 @@ export interface WorkItemData {
   /** 附件列表 */
   attachments: Array<{ name: string; url: string }>;
   /** 评论列表 */
-  comments: Array<{ author: string; time: string; content: string }>;
+  comments: Array<{ author: string; time: string; content: string; deleted?: boolean; replyTo?: string }>;
 }
 
 /**
@@ -151,12 +151,23 @@ function formatWorkItem(item: any): WorkItemData {
     url: att.url || att.download_url || '',
   }));
 
-  // 评论
-  const comments = (item.comments || []).map((comment: any) => ({
-    author: comment.created_by_name || '用户',
-    time: formatTimestamp(comment.created_at),
-    content: parseCommentContent(comment.content),
-  }));
+  // 评论。已删除的不把提示写进 content，避免被当成评论正文。
+  // 回复指向放在标题，不写进 content。
+  const rawComments = item.comments || [];
+  const commentIdToIndex = new Map<string, number>();
+  rawComments.forEach((comment: any, index: number) => {
+    if (comment?._id) commentIdToIndex.set(comment._id, index + 1);
+  });
+  const comments = rawComments.map((comment: any) => {
+    const deleted = isDeletedComment(comment);
+    return {
+      author: comment.created_by_name || '用户',
+      time: formatTimestamp(comment.created_at),
+      deleted,
+      replyTo: replyTargetLabel(comment, commentIdToIndex),
+      content: deleted ? '' : parseCommentContent(comment.content),
+    };
+  });
   return {
     id: { label: '编号', value: id },
     title: { label: '标题', value: item.title || '' },
@@ -214,7 +225,16 @@ function getWorkItemString(data: WorkItemData): string {
   if (data.comments.length > 0) {
     lines.push('', `### 评论 (${data.comments.length})`, '');
     data.comments.forEach((comment, index) => {
-      lines.push(`**${index + 1}. ${comment.author}** (${comment.time}):`);
+      const heading = `**${index + 1}. ${comment.author}** (${comment.time})`;
+      const reply = comment.replyTo ? ` — ${comment.replyTo}` : '';
+      if (comment.deleted) {
+        lines.push(
+          `${heading}${reply} — [已删除] 无正文。系统标记，不是评论内容，忽略。`
+        );
+        lines.push('');
+        return;
+      }
+      lines.push(reply ? `${heading}${reply}` : `${heading}:`);
       lines.push(`> ${comment.content}`);
       lines.push('');
     });
@@ -236,9 +256,16 @@ function parseInlineElement(child: any): string {
       const linkText = child.children?.map((c: any) => c.text || '').join('') || child.url;
       return `[${linkText}](${child.url})`;
 
-    case 'mention':
-      // @提及
-      return `@${child.display_name || child.text || '用户'}`;
+    case 'mention': {
+      // 人名在 data.name，display_name / text 经常是空的
+      const name =
+        child.display_name ||
+        child.data?.name ||
+        child.name ||
+        child.text ||
+        '用户';
+      return `@${name}`;
+    }
 
     case 'image':
       // 内联图片
@@ -311,6 +338,31 @@ function parseBlockElement(block: any): string {
       }
       return block.text || block.content || '';
   }
+}
+
+/** 评论已软删除。PingCode 用 0/1 表示，正文会被清空。 */
+function isDeletedComment(comment: any): boolean {
+  return comment?.is_deleted === 1 || comment?.is_deleted === true;
+}
+
+/**
+ * 回复指向当前列表中的第几条。
+ * 用 reply_comment._id 对齐，不能按“上一条”推断，回复不一定挨着原评论。
+ */
+function replyTargetLabel(
+  comment: any,
+  idToIndex: Map<string, number>
+): string | undefined {
+  const reply = comment?.reply_comment;
+  if (!reply?._id && !comment?.is_reply_comment) return undefined;
+
+  const index = reply?._id ? idToIndex.get(reply._id) : undefined;
+  if (index) return `回复第 ${index} 条`;
+
+  const author = reply?.reply_user?.display_name;
+  const time = reply?.created_at ? formatTimestamp(reply.created_at) : '';
+  const who = [author, time].filter(Boolean).join(' ');
+  return who ? `回复一条当前列表没有的评论（${who}）` : '回复一条当前列表没有的评论';
 }
 
 // 解析评论富文本内容
@@ -473,7 +525,7 @@ export async function getWorkItem(identifier: string): Promise<{
       '',
       `**开始前确认**：AI 必须先输出 "${requiredFirstOutput}"`,
       '',
-      '**内容解析**：描述与评论冲突以评论为准；多条更新按时间倒序；图片可能包含关键信息',
+      '**内容解析**：描述与评论冲突以评论为准；带 [已删除] 的条目没有正文，不是评论内容，忽略；标题中的「回复第 N 条」只表示指向，不是评论正文；多条更新按时间倒序；图片可能包含关键信息',
       '',
       '**Commit 信息**：',
       '- commit 要简洁，只用标题，不要 body/footer',
@@ -897,6 +949,100 @@ export async function updateBugFields(
     return {
       success: true,
       data: `✅ 工作项 ${workItemId} 已更新：\n${updates.map((u) => `  - ${u}`).join('\n')}`,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * 把纯文本里的 @姓名 换成 mention 节点。姓名按长度优先匹配，避免短名字截断长名字。
+ */
+function buildCommentContent(text: string, nameToUids: Map<string, string[]>): any[] {
+  const names = [...nameToUids.keys()].sort((a, b) => b.length - a.length);
+  const children: any[] = [];
+  let rest = text;
+
+  while (rest.length > 0) {
+    let foundAt = -1;
+    let foundName = '';
+    for (const name of names) {
+      const at = rest.indexOf(`@${name}`);
+      if (at !== -1 && (foundAt === -1 || at < foundAt)) {
+        foundAt = at;
+        foundName = name;
+      }
+    }
+
+    if (foundAt === -1) {
+      const orphan = rest.match(/@\S+/);
+      if (orphan) {
+        throw new Error(`无法解析提及 ${orphan[0]}，项目成员中没有这个名字`);
+      }
+      children.push({ text: rest });
+      break;
+    }
+
+    const uids = nameToUids.get(foundName) || [];
+    if (uids.length !== 1) {
+      throw new Error(`成员「${foundName}」对应 ${uids.length} 个用户，无法确定 @ 谁`);
+    }
+    if (foundAt > 0) {
+      children.push({ text: rest.slice(0, foundAt) });
+    }
+    children.push({
+      type: 'mention',
+      uid: uids[0],
+      data: { name: foundName },
+      children: [{ text: '' }],
+    });
+    rest = rest.slice(foundAt + foundName.length + 1);
+  }
+
+  if (children.length === 0) {
+    children.push({ text: '' });
+  }
+  return [{ type: 'paragraph', children }];
+}
+
+/**
+ * 给工作项添加评论。content 里的 @姓名 会转成 mention，不会只留在普通文本里。
+ */
+export async function addWorkItemComment(
+  workItemId: string,
+  content: string,
+  replyCommentId?: string
+): Promise<{ success: boolean; data?: string; error?: string }> {
+  try {
+    const text = content?.trim();
+    if (!text) {
+      return { success: false, error: '评论内容不能为空' };
+    }
+
+    const projectIdentifier = workItemId.includes('-')
+      ? workItemId.split('-')[0]
+      : '';
+    const members = projectIdentifier
+      ? await pingcodeClient.getProjectMembers(projectIdentifier)
+      : new Map<string, string>();
+    const nameToUids = new Map<string, string[]>();
+    for (const [uid, name] of members) {
+      const list = nameToUids.get(name) || [];
+      list.push(uid);
+      nameToUids.set(name, list);
+    }
+
+    const slate = buildCommentContent(text, nameToUids);
+    const created = await pingcodeClient.addWorkItemComment(workItemId, slate, {
+      replyCommentId,
+    });
+    const commentId = created?._id ? `，评论 ID: ${created._id}` : '';
+    return {
+      success: true,
+      data: `✅ 已给 ${workItemId} 添加评论${commentId}`,
     };
   } catch (error: any) {
     return {
